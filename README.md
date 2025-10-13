@@ -3,6 +3,8 @@
 ## Project Overview
 This project implements a U-Net convolutional neural network for semantic segmentation of buildings from satellite imagery. The model performs pixel-wise classification to identify building structures in aerial images.
 
+## Colab link for TA: https://colab.research.google.com/drive/1X5rW_S2eEHiIV23cxyKeoVdXFDkVJCPK
+
 ## Installation & Setup
 
 ### Prerequisites
