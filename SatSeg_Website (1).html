@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SatSeg — Building Detection via Enhanced U-Net</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #070b0f;
+  --surface: #0d1318;
+  --card: #111820;
+  --border: #1e2d3d;
+  --accent: #00e5ff;
+  --accent2: #76ff03;
+  --accent3: #ff6d00;
+  --text: #e8f0fe;
+  --muted: #8899aa;
+  --head: #ffffff;
+  --mono: 'Space Mono', monospace;
+  --sans: 'Syne', sans-serif;
+  --body: 'Inter', sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--body);
+  font-weight: 300;
+  overflow-x: hidden;
+  line-height: 1.7;
+}
+
+/* ── NOISE GRAIN ───────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none; z-index: 9999; opacity: .4;
+}
+
+/* ── GRID BACKGROUND ───────────────────────────── */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(0,229,255,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,229,255,.025) 1px, transparent 1px);
+  background-size: 60px 60px;
+  pointer-events: none; z-index: 0;
+}
+
+/* ── NAV ───────────────────────────────────────── */
+nav {
+  position: fixed; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 3rem;
+  height: 64px;
+  background: rgba(7,11,15,.85);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border);
+  z-index: 100;
+}
+
+.logo {
+  font-family: var(--mono);
+  font-size: 1rem;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+}
+.logo span { color: var(--accent2); }
+
+.nav-links { display: flex; gap: 2.4rem; list-style: none; }
+.nav-links a {
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color .2s;
+}
+.nav-links a:hover { color: var(--accent); }
+
+/* ── HERO ──────────────────────────────────────── */
+#hero {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  flex-direction: column;
+  text-align: center;
+  padding: 120px 2rem 80px;
+  position: relative;
+  z-index: 1;
+}
+
+.hero-tag {
+  font-family: var(--mono);
+  font-size: .7rem;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid rgba(0,229,255,.3);
+  padding: .4em 1.2em;
+  border-radius: 2px;
+  margin-bottom: 2.4rem;
+  animation: fadeUp .8s ease both;
+}
+
+h1 {
+  font-family: var(--sans);
+  font-size: clamp(2.8rem, 7vw, 6.5rem);
+  font-weight: 800;
+  line-height: 1.0;
+  letter-spacing: -0.02em;
+  color: var(--head);
+  max-width: 900px;
+  margin-bottom: 1.8rem;
+  animation: fadeUp .8s .15s ease both;
+}
+
+h1 em {
+  font-style: normal;
+  color: transparent;
+  -webkit-text-stroke: 2px var(--accent);
+}
+
+.hero-sub {
+  font-size: 1.05rem;
+  color: var(--muted);
+  max-width: 560px;
+  margin-bottom: 3rem;
+  animation: fadeUp .8s .25s ease both;
+}
+
+.btn-group { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center; animation: fadeUp .8s .35s ease both; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: .5rem;
+  padding: .75em 2em;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: .8rem;
+  letter-spacing: .08em;
+  text-decoration: none;
+  cursor: pointer; border: none;
+  transition: transform .2s, box-shadow .2s;
+}
+.btn:hover { transform: translateY(-2px); }
+
+.btn-primary {
+  background: var(--accent);
+  color: #000;
+  box-shadow: 0 0 24px rgba(0,229,255,.35);
+}
+.btn-primary:hover { box-shadow: 0 0 40px rgba(0,229,255,.55); }
+
+.btn-outline {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.btn-outline:hover { background: rgba(0,229,255,.08); }
+
+/* ── HERO METRICS ──────────────────────────────── */
+.hero-metrics {
+  display: flex; gap: 3rem; margin-top: 5rem; flex-wrap: wrap; justify-content: center;
+  animation: fadeUp .8s .5s ease both;
+}
+.metric { text-align: center; }
+.metric-val {
+  font-family: var(--mono);
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: var(--accent);
+  display: block;
+  line-height: 1;
+}
+.metric-lbl {
+  font-size: .72rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: .4rem;
+  display: block;
+}
+
+/* ── SECTION BASE ──────────────────────────────── */
+section { position: relative; z-index: 1; }
+
+.section-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 100px 2rem;
+}
+
+.section-tag {
+  font-family: var(--mono);
+  font-size: .68rem;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 1rem;
+  display: block;
+}
+
+h2 {
+  font-family: var(--sans);
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 800;
+  color: var(--head);
+  margin-bottom: 1.2rem;
+  letter-spacing: -0.01em;
+}
+
+.section-desc {
+  color: var(--muted);
+  max-width: 600px;
+  margin-bottom: 3.5rem;
+}
+
+/* ── ABOUT GRID ────────────────────────────────── */
+.about-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+  align-items: start;
+}
+@media (max-width: 720px) { .about-grid { grid-template-columns: 1fr; } }
+
+.about-text p { color: var(--muted); margin-bottom: 1rem; }
+.about-text p strong { color: var(--text); }
+
+.highlight-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent2);
+  border-radius: 4px;
+  padding: 1.6rem;
+  margin-bottom: 1.2rem;
+}
+.highlight-card h4 { font-family: var(--sans); font-weight: 600; color: var(--head); margin-bottom: .4rem; }
+.highlight-card p { color: var(--muted); font-size: .9rem; }
+
+/* ── ARCHITECTURE ──────────────────────────────── */
+#architecture { background: var(--surface); }
+
+.arch-visual {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2.5rem;
+  overflow-x: auto;
+  margin-bottom: 2rem;
+}
+
+.arch-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-bottom: 1.2rem; }
+
+.arch-block {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  border-radius: 4px;
+  padding: .6rem .9rem;
+  font-family: var(--mono);
+  font-size: .65rem;
+  text-align: center;
+  min-width: 90px;
+  line-height: 1.4;
+  border: 1px solid;
+}
+.arch-block.enc   { background: rgba(0,229,255,.08); border-color: rgba(0,229,255,.3); color: var(--accent); }
+.arch-block.btn   { background: rgba(118,255,3,.08); border-color: rgba(118,255,3,.3); color: var(--accent2); }
+.arch-block.dec   { background: rgba(255,109,0,.08); border-color: rgba(255,109,0,.3); color: var(--accent3); }
+.arch-block.attn  { background: rgba(255,64,129,.08); border-color: rgba(255,64,129,.3); color: #ff4081; }
+.arch-block.out   { background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.2); color: var(--head); }
+
+.arch-arrow { color: var(--muted); font-size: 1.2rem; }
+.arch-skip  { color: #ffd740; font-size: .9rem; letter-spacing: 0.05em; font-family: var(--mono); }
+
+/* ── RESULTS ───────────────────────────────────── */
+.results-tabs { display: flex; gap: .5rem; margin-bottom: 2rem; flex-wrap: wrap; }
+.tab-btn {
+  padding: .5em 1.4em;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .08em;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all .2s;
+}
+.tab-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+.tab-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── CHART CANVAS ──────────────────────────────── */
+.chart-wrap {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2rem;
+}
+
+.bar-chart { display: flex; flex-direction: column; gap: .9rem; }
+.bar-row { display: flex; align-items: center; gap: 1rem; }
+.bar-label { font-family: var(--mono); font-size: .72rem; color: var(--muted); min-width: 130px; text-align: right; }
+.bar-track { flex: 1; height: 28px; background: rgba(255,255,255,.05); border-radius: 2px; overflow: hidden; position: relative; }
+.bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  display: flex; align-items: center; justify-content: flex-end; padding-right: .6rem;
+  font-family: var(--mono); font-size: .7rem; color: #000;
+  transform-origin: left;
+  animation: barGrow 1.2s cubic-bezier(.16,1,.3,1) both;
+}
+@keyframes barGrow { from { width: 0 !important; } }
+
+.bar-fill.fcn   { background: linear-gradient(90deg, #ff6d00, #ff9800); }
+.bar-fill.segnet{ background: linear-gradient(90deg, #ffd740, #ffe57f); }
+.bar-fill.deep  { background: linear-gradient(90deg, #ea80fc, #f8bbd0); }
+.bar-fill.unet  { background: linear-gradient(90deg, #4fc3f7, #81d4fa); }
+.bar-fill.ours  { background: linear-gradient(90deg, #76ff03, #ccff90); box-shadow: 0 0 16px rgba(118,255,3,.5); }
+
+/* ── DATA TABLE ────────────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th {
+  font-family: var(--mono); font-size: .7rem; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding: .75rem 1rem; text-align: center;
+}
+.data-table td {
+  padding: .7rem 1rem; text-align: center;
+  font-family: var(--mono); font-size: .82rem;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  color: var(--text);
+}
+.data-table tr:last-child td { color: var(--accent2); font-weight: 700; background: rgba(118,255,3,.05); }
+.data-table td:first-child { text-align: left; }
+
+/* ── METRICS GRID ──────────────────────────────── */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.2rem;
+}
+
+.metric-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.8rem;
+  text-align: center;
+  transition: border-color .3s, transform .3s;
+}
+.metric-card:hover { border-color: var(--accent); transform: translateY(-4px); }
+.metric-card .val {
+  font-family: var(--mono); font-size: 2.4rem; font-weight: 700;
+  color: var(--accent); display: block; margin-bottom: .4rem;
+}
+.metric-card .lbl { font-size: .78rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.metric-card .desc { font-size: .82rem; color: var(--muted); margin-top: .4rem; }
+
+/* ── TRAINING VIZ ──────────────────────────────── */
+#training { background: var(--surface); }
+
+.training-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+@media (max-width: 700px) { .training-grid { grid-template-columns: 1fr; } }
+
+.mini-chart {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.5rem;
+}
+.mini-chart h4 { font-family: var(--sans); font-weight: 600; color: var(--head); margin-bottom: 1rem; font-size: .9rem; }
+
+svg.sparkline { width: 100%; height: 80px; }
+.spark-path { fill: none; stroke-width: 2; stroke-linecap: round; }
+.spark-area { opacity: .12; }
+
+/* ── ABOUT AUTHOR ──────────────────────────────── */
+#author { border-top: 1px solid var(--border); }
+
+.author-card {
+  display: flex; align-items: flex-start; gap: 2.5rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2.5rem;
+  flex-wrap: wrap;
+}
+
+.author-avatar {
+  width: 80px; height: 80px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--sans); font-size: 1.8rem; font-weight: 800; color: #000;
+  flex-shrink: 0;
+}
+
+.author-info h3 { font-family: var(--sans); font-weight: 800; font-size: 1.4rem; color: var(--head); margin-bottom: .3rem; }
+.author-info .role { font-family: var(--mono); font-size: .78rem; color: var(--accent); margin-bottom: .8rem; display: block; }
+.author-info p { color: var(--muted); font-size: .9rem; }
+.author-info a { color: var(--accent); text-decoration: none; }
+
+/* ── FOOTER ────────────────────────────────────── */
+footer {
+  border-top: 1px solid var(--border);
+  padding: 2.5rem 3rem;
+  display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 1rem;
+  position: relative; z-index: 1;
+}
+footer .copy { font-family: var(--mono); font-size: .72rem; color: var(--muted); }
+footer .links a { font-family: var(--mono); font-size: .72rem; color: var(--muted); margin-left: 1.5rem; text-decoration: none; }
+footer .links a:hover { color: var(--accent); }
+
+/* ── SCROLLBAR ─────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── ANIMATIONS ────────────────────────────────── */
+@keyframes fadeUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+
+.reveal { opacity: 0; transform: translateY(30px); transition: opacity .7s ease, transform .7s ease; }
+.reveal.visible { opacity: 1; transform: translateY(0); }
+
+/* ── SEPARATOR ─────────────────────────────────── */
+.sep { display: flex; align-items: center; gap: 1rem; margin: 2rem 0; }
+.sep-line { flex: 1; height: 1px; background: var(--border); }
+.sep-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">SAT<span>SEG</span></div>
+  <ul class="nav-links">
+    <li><a href="#about">About</a></li>
+    <li><a href="#architecture">Architecture</a></li>
+    <li><a href="#results">Results</a></li>
+    <li><a href="#training">Training</a></li>
+    <li><a href="#author">Author</a></li>
+  </ul>
+</nav>
+
+<!-- ── HERO ─────────────────────────────────────── -->
+<section id="hero">
+  <div class="hero-tag">Research · IEEE 2025 · ICRSML</div>
+  <h1>Satellite Building<br>Detection via <em>U-Net</em></h1>
+  <p class="hero-sub">
+    Pixel-wise semantic segmentation of buildings from high-resolution satellite imagery
+    using an attention-augmented U-Net architecture with spatial dropout regularization.
+  </p>
+  <div class="btn-group">
+    <a href="https://github.com/atharv24mittal/Satellite-Image-Segmentation-for-Building-Detection-using-U-net" target="_blank" class="btn btn-primary">GitHub Repo</a>
+    <a href="#results" class="btn btn-outline">View Results</a>
+  </div>
+  <div class="hero-metrics">
+    <div class="metric">
+      <span class="metric-val" data-target="95.4">0</span>
+      <span class="metric-lbl">Pixel Accuracy %</span>
+    </div>
+    <div class="metric">
+      <span class="metric-val" data-target="85.7">0</span>
+      <span class="metric-lbl">IoU Score %</span>
+    </div>
+    <div class="metric">
+      <span class="metric-val" data-target="87.2">0</span>
+      <span class="metric-lbl">F1-Score %</span>
+    </div>
+    <div class="metric">
+      <span class="metric-val" data-target="0.974">0</span>
+      <span class="metric-lbl">AUC-ROC</span>
+    </div>
+  </div>
+</section>
+
+<!-- ── ABOUT ─────────────────────────────────────── -->
+<section id="about">
+  <div class="section-inner">
+    <span class="section-tag">Overview</span>
+    <h2>What This Research Does</h2>
+    <p class="section-desc">
+      An end-to-end deep learning pipeline that segments building footprints from satellite imagery
+      with state-of-the-art accuracy across geographically diverse cities.
+    </p>
+    <div class="about-grid reveal">
+      <div class="about-text">
+        <p>Accurate building detection from satellite imagery underpins <strong>urban planning, disaster response,
+        population estimation</strong>, and geospatial intelligence at scale.</p>
+        <p>Traditional U-Net architectures over-segment non-building regions (roads, parking lots) with
+        roof-like textures. This research introduces two targeted improvements:</p>
+        <p>① <strong>Soft Attention Gates</strong> at every decoder skip connection — the model learns
+        which spatial locations matter, suppressing irrelevant activations.</p>
+        <p>② <strong>Spatial Dropout (p=0.3)</strong> applied after the final decoder block — stochastically
+        zeroes entire feature maps, preventing co-adaptation and improving generalization
+        across unseen cities.</p>
+        <p>Trained on the <strong>Inria Aerial Image Labeling Dataset</strong> — 360 high-resolution tiles
+        spanning 5 cities — and benchmarked against FCN-8s, SegNet, DeepLab v3+, and vanilla U-Net.</p>
+      </div>
+      <div>
+        <div class="highlight-card">
+          <h4>🛰️ Multi-city generalization</h4>
+          <p>Trained on Austin, Chicago, Kitsap, Western Tyrol, Vienna. Evaluated on held-out tiles to test geographic generalization.</p>
+        </div>
+        <div class="highlight-card">
+          <h4>🎯 State-of-the-art on Inria</h4>
+          <p>Outperforms all four baselines across pixel accuracy, IoU, F1, Dice, and AUC — with +6.1% IoU improvement over vanilla U-Net.</p>
+        </div>
+        <div class="highlight-card">
+          <h4>⚡ Efficient inference</h4>
+          <p>7.4M parameters. 18ms per 256×256 patch on NVIDIA T4. Full 5000×5000 satellite tile in ~30 seconds.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── ARCHITECTURE ────────────────────────────── -->
+<section id="architecture">
+  <div class="section-inner">
+    <span class="section-tag">Model Design</span>
+    <h2>Enhanced U-Net Architecture</h2>
+    <p class="section-desc">
+      Encoder–decoder design with attention-gated skip connections and spatial dropout.
+      Each attention gate learns to suppress irrelevant spatial regions before concatenation.
+    </p>
+
+    <div class="arch-visual reveal">
+      <div class="arch-row">
+        <div class="arch-block enc">Input<br>256×256×3</div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-block enc">Enc Block 1<br>32 filters<br>256×256</div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-block enc">Enc Block 2<br>64 filters<br>128×128</div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-block enc">Enc Block 3<br>128 filters<br>64×64</div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-block btn">Bottleneck<br>256 filters<br>32×32</div>
+      </div>
+      <div class="arch-row" style="margin-left:2rem; color: var(--muted); font-size:.8rem;">
+        <span class="arch-skip">↓ skip connections (attention-gated) ↓</span>
+      </div>
+      <div class="arch-row">
+        <div class="arch-block out">Output<br>Binary Mask<br>256×256</div>
+        <span class="arch-arrow">←</span>
+        <div class="arch-block out">1×1 Conv<br>Sigmoid</div>
+        <span class="arch-arrow">←</span>
+        <div class="arch-block out">Dropout<br>p = 0.3</div>
+        <span class="arch-arrow">←</span>
+        <div class="arch-block dec">Dec Block 1<br>32 filters<br>256×256</div>
+        <span class="arch-arrow">←</span>
+        <div class="arch-block dec">Dec Block 2<br>64 filters<br>128×128</div>
+        <span class="arch-arrow">←</span>
+        <div class="arch-block dec">Dec Block 3<br>128 filters<br>64×64</div>
+      </div>
+      <div class="arch-row" style="margin-top:1rem; gap:2rem; flex-wrap:wrap;">
+        <div class="arch-block attn" style="min-width:120px;">Attention Gate<br>α = σ(Wψ·σ₁(Wg·g + Wx·x))</div>
+        <div style="font-size:.82rem; color:var(--muted); max-width:420px; line-height:1.6;">
+          Each attention gate takes the gating signal <strong style="color:var(--accent)">g</strong> from
+          the lower decoder level and features <strong style="color:var(--accent2)">x</strong> from the
+          encoder skip. The soft map α selectively amplifies building-relevant regions.
+        </div>
+      </div>
+    </div>
+
+    <div class="metrics-grid reveal" style="margin-top:2rem;">
+      <div class="metric-card">
+        <span class="val">7.4M</span>
+        <span class="lbl">Parameters</span>
+        <span class="desc">Lightweight and deployable on consumer GPUs</span>
+      </div>
+      <div class="metric-card">
+        <span class="val">18ms</span>
+        <span class="lbl">Inference/Patch</span>
+        <span class="desc">NVIDIA T4 GPU, 256×256 input</span>
+      </div>
+      <div class="metric-card">
+        <span class="val">256px</span>
+        <span class="lbl">Input Resolution</span>
+        <span class="desc">30 cm/pixel satellite imagery</span>
+      </div>
+      <div class="metric-card">
+        <span class="val">BCE+Dice</span>
+        <span class="lbl">Loss Function</span>
+        <span class="desc">Handles 38% building pixel imbalance</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── RESULTS ─────────────────────────────────── -->
+<section id="results">
+  <div class="section-inner">
+    <span class="section-tag">Benchmarks</span>
+    <h2>Experimental Results</h2>
+    <p class="section-desc">
+      Evaluated on the Inria Aerial Image Labeling Dataset test split (900 images across 5 cities).
+      Our model achieves best-in-class performance across all four metrics.
+    </p>
+
+    <div class="results-tabs">
+      <button class="tab-btn active" onclick="showTab('iou')">IoU Score</button>
+      <button class="tab-btn" onclick="showTab('acc')">Pixel Accuracy</button>
+      <button class="tab-btn" onclick="showTab('f1')">F1-Score</button>
+      <button class="tab-btn" onclick="showTab('table')">Full Table</button>
+    </div>
+
+    <div id="tab-iou" class="tab-panel active chart-wrap reveal">
+      <div class="bar-chart">
+        <div class="bar-row"><span class="bar-label">FCN-8s</span><div class="bar-track"><div class="bar-fill fcn" style="width:71.4%">71.4%</div></div></div>
+        <div class="bar-row"><span class="bar-label">SegNet</span><div class="bar-track"><div class="bar-fill segnet" style="width:74.8%">74.8%</div></div></div>
+        <div class="bar-row"><span class="bar-label">DeepLab v3+</span><div class="bar-track"><div class="bar-fill deep" style="width:78.3%">78.3%</div></div></div>
+        <div class="bar-row"><span class="bar-label">U-Net (Base)</span><div class="bar-track"><div class="bar-fill unet" style="width:79.6%">79.6%</div></div></div>
+        <div class="bar-row"><span class="bar-label">U-Net+Attn (Ours)</span><div class="bar-track"><div class="bar-fill ours" style="width:85.7%">85.7% ★</div></div></div>
+      </div>
+    </div>
+
+    <div id="tab-acc" class="tab-panel chart-wrap reveal">
+      <div class="bar-chart">
+        <div class="bar-row"><span class="bar-label">FCN-8s</span><div class="bar-track"><div class="bar-fill fcn" style="width:87.2%">87.2%</div></div></div>
+        <div class="bar-row"><span class="bar-label">SegNet</span><div class="bar-track"><div class="bar-fill segnet" style="width:89.5%">89.5%</div></div></div>
+        <div class="bar-row"><span class="bar-label">DeepLab v3+</span><div class="bar-track"><div class="bar-fill deep" style="width:91.3%">91.3%</div></div></div>
+        <div class="bar-row"><span class="bar-label">U-Net (Base)</span><div class="bar-track"><div class="bar-fill unet" style="width:92.1%">92.1%</div></div></div>
+        <div class="bar-row"><span class="bar-label">U-Net+Attn (Ours)</span><div class="bar-track"><div class="bar-fill ours" style="width:95.4%">95.4% ★</div></div></div>
+      </div>
+    </div>
+
+    <div id="tab-f1" class="tab-panel chart-wrap reveal">
+      <div class="bar-chart">
+        <div class="bar-row"><span class="bar-label">FCN-8s</span><div class="bar-track"><div class="bar-fill fcn" style="width:73.8%">73.8%</div></div></div>
+        <div class="bar-row"><span class="bar-label">SegNet</span><div class="bar-track"><div class="bar-fill segnet" style="width:76.2%">76.2%</div></div></div>
+        <div class="bar-row"><span class="bar-label">DeepLab v3+</span><div class="bar-track"><div class="bar-fill deep" style="width:80.1%">80.1%</div></div></div>
+        <div class="bar-row"><span class="bar-label">U-Net (Base)</span><div class="bar-track"><div class="bar-fill unet" style="width:81.4%">81.4%</div></div></div>
+        <div class="bar-row"><span class="bar-label">U-Net+Attn (Ours)</span><div class="bar-track"><div class="bar-fill ours" style="width:87.2%">87.2% ★</div></div></div>
+      </div>
+    </div>
+
+    <div id="tab-table" class="tab-panel chart-wrap reveal">
+      <table class="data-table">
+        <thead><tr>
+          <th>Method</th><th>Pixel Acc.</th><th>IoU</th><th>F1</th><th>Dice</th><th>AUC</th>
+        </tr></thead>
+        <tbody>
+          <tr><td>FCN-8s</td><td>87.2%</td><td>71.4%</td><td>73.8%</td><td>72.1%</td><td>0.903</td></tr>
+          <tr><td>SegNet</td><td>89.5%</td><td>74.8%</td><td>76.2%</td><td>75.0%</td><td>0.921</td></tr>
+          <tr><td>DeepLab v3+</td><td>91.3%</td><td>78.3%</td><td>80.1%</td><td>79.0%</td><td>0.942</td></tr>
+          <tr><td>U-Net (Baseline)</td><td>92.1%</td><td>79.6%</td><td>81.4%</td><td>80.5%</td><td>0.951</td></tr>
+          <tr><td>U-Net + Attention (Ours) ★</td><td>95.4%</td><td>85.7%</td><td>87.2%</td><td>86.3%</td><td>0.974</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── TRAINING ────────────────────────────────── -->
+<section id="training">
+  <div class="section-inner">
+    <span class="section-tag">Training Dynamics</span>
+    <h2>Learning Curves</h2>
+    <p class="section-desc">
+      50 epochs with Adam optimizer, learning rate 1e-4 halved every 10 epochs.
+      No overfitting — train–val gap stays below 0.04 throughout.
+    </p>
+
+    <div class="training-grid reveal">
+      <!-- Loss Sparkline -->
+      <div class="mini-chart">
+        <h4>Loss (BCE + Dice Combined)</h4>
+        <svg class="sparkline" viewBox="0 0 300 80" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#00e5ff" stop-opacity=".3"/>
+              <stop offset="100%" stop-color="#00e5ff" stop-opacity="0"/>
+            </linearGradient>
+            <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#ff8a65" stop-opacity=".3"/>
+              <stop offset="100%" stop-color="#ff8a65" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <!-- Train loss -->
+          <path class="spark-area" fill="url(#g1)"
+            d="M0,8 C30,8 40,15 80,30 S150,55 200,65 S260,70 300,72 L300,80 L0,80 Z"/>
+          <path class="spark-path" stroke="#00e5ff"
+            d="M0,8 C30,8 40,15 80,30 S150,55 200,65 S260,70 300,72"/>
+          <!-- Val loss -->
+          <path class="spark-area" fill="url(#g2)"
+            d="M0,6 C25,6 40,14 80,28 S150,52 200,63 S260,68 300,70 L300,80 L0,80 Z"/>
+          <path class="spark-path" stroke="#ff8a65" stroke-dasharray="4,2"
+            d="M0,6 C25,6 40,14 80,28 S150,52 200,63 S260,68 300,70"/>
+        </svg>
+        <div style="display:flex;gap:1.5rem;margin-top:.6rem;font-size:.72rem;font-family:var(--mono);">
+          <span style="color:#00e5ff">— Train</span>
+          <span style="color:#ff8a65">- - Val</span>
+        </div>
+      </div>
+
+      <!-- IoU Sparkline -->
+      <div class="mini-chart">
+        <h4>IoU Score</h4>
+        <svg class="sparkline" viewBox="0 0 300 80" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="g3" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#76ff03" stop-opacity=".3"/>
+              <stop offset="100%" stop-color="#76ff03" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path class="spark-area" fill="url(#g3)"
+            d="M0,75 C20,72 40,60 80,40 S150,18 200,12 S260,8 300,7 L300,80 L0,80 Z"/>
+          <path class="spark-path" stroke="#76ff03"
+            d="M0,75 C20,72 40,60 80,40 S150,18 200,12 S260,8 300,7"/>
+          <path class="spark-path" stroke="#ffd740" stroke-dasharray="4,2"
+            d="M0,76 C20,73 40,62 80,43 S150,21 200,15 S260,11 300,10"/>
+        </svg>
+        <div style="display:flex;gap:1.5rem;margin-top:.6rem;font-size:.72rem;font-family:var(--mono);">
+          <span style="color:#76ff03">— Train IoU</span>
+          <span style="color:#ffd740">- - Val IoU</span>
+        </div>
+      </div>
+
+      <!-- Accuracy Sparkline -->
+      <div class="mini-chart">
+        <h4>Pixel Accuracy</h4>
+        <svg class="sparkline" viewBox="0 0 300 80" preserveAspectRatio="none">
+          <path class="spark-path" stroke="#ea80fc"
+            d="M0,68 C20,64 40,50 80,32 S150,14 200,9 S260,6 300,5"/>
+          <path class="spark-path" stroke="#4fc3f7" stroke-dasharray="4,2"
+            d="M0,70 C20,66 40,53 80,36 S150,18 200,12 S260,8 300,7"/>
+        </svg>
+        <div style="display:flex;gap:1.5rem;margin-top:.6rem;font-size:.72rem;font-family:var(--mono);">
+          <span style="color:#ea80fc">— Train Acc</span>
+          <span style="color:#4fc3f7">- - Val Acc</span>
+        </div>
+      </div>
+
+      <!-- Ablation mini bar -->
+      <div class="mini-chart">
+        <h4>Ablation Study — IoU Gain</h4>
+        <div style="display:flex;flex-direction:column;gap:.5rem;margin-top:.4rem;">
+          <div style="display:flex;align-items:center;gap:.8rem;">
+            <span style="font-family:var(--mono);font-size:.65rem;color:var(--muted);min-width:95px">Base U-Net</span>
+            <div style="flex:1;background:rgba(255,255,255,.05);height:18px;border-radius:2px;overflow:hidden">
+              <div style="width:79.6%;height:100%;background:#4fc3f7;display:flex;align-items:center;padding-left:.4rem;font-family:var(--mono);font-size:.62rem;color:#000">79.6%</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:.8rem;">
+            <span style="font-family:var(--mono);font-size:.65rem;color:var(--muted);min-width:95px">+Dice Loss</span>
+            <div style="flex:1;background:rgba(255,255,255,.05);height:18px;border-radius:2px;overflow:hidden">
+              <div style="width:81.2%;height:100%;background:#69b7ff;display:flex;align-items:center;padding-left:.4rem;font-family:var(--mono);font-size:.62rem;color:#000">81.2%</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:.8rem;">
+            <span style="font-family:var(--mono);font-size:.65rem;color:var(--muted);min-width:95px">+Augment</span>
+            <div style="flex:1;background:rgba(255,255,255,.05);height:18px;border-radius:2px;overflow:hidden">
+              <div style="width:82.8%;height:100%;background:#a0d4ff;display:flex;align-items:center;padding-left:.4rem;font-family:var(--mono);font-size:.62rem;color:#000">82.8%</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:.8rem;">
+            <span style="font-family:var(--mono);font-size:.65rem;color:var(--muted);min-width:95px">+Dropout</span>
+            <div style="flex:1;background:rgba(255,255,255,.05);height:18px;border-radius:2px;overflow:hidden">
+              <div style="width:83.5%;height:100%;background:#ccff90;display:flex;align-items:center;padding-left:.4rem;font-family:var(--mono);font-size:.62rem;color:#000">83.5%</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:.8rem;">
+            <span style="font-family:var(--mono);font-size:.65rem;color:var(--accent2);min-width:95px;font-weight:700">+Attn Gates ★</span>
+            <div style="flex:1;background:rgba(255,255,255,.05);height:18px;border-radius:2px;overflow:hidden">
+              <div style="width:85.7%;height:100%;background:linear-gradient(90deg,#76ff03,#ccff90);display:flex;align-items:center;padding-left:.4rem;font-family:var(--mono);font-size:.62rem;color:#000;box-shadow:0 0 12px rgba(118,255,3,.5)">85.7% ★</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── AUTHOR ──────────────────────────────────── -->
+<section id="author">
+  <div class="section-inner">
+    <span class="section-tag">Researcher</span>
+    <h2>About the Author</h2>
+    <div class="author-card reveal">
+      <div class="author-avatar">AM</div>
+      <div class="author-info">
+        <h3>Atharv Mittal</h3>
+        <span class="role">B.Tech Computer Science &amp; Engineering · PES University, Bengaluru, India</span>
+        <p>
+          Researcher specializing in deep learning applications for remote sensing and geospatial intelligence.
+          This work was developed as a machine learning project on satellite image segmentation using encoder-decoder
+          architectures. Contact: <a href="mailto:atharvmittal2004@gmail.com">atharvmittal2004@gmail.com</a>
+        </p>
+        <div style="margin-top:1rem;display:flex;gap:1rem;flex-wrap:wrap;">
+          <a href="https://github.com/atharv24mittal" target="_blank" class="btn btn-outline" style="padding:.4em 1.2em;font-size:.72rem">GitHub</a>
+          <a href="mailto:atharvmittal2004@gmail.com" class="btn btn-outline" style="padding:.4em 1.2em;font-size:.72rem">Email</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span class="copy">© 2025 Atharv Mittal · IEEE ICRSML 2025</span>
+  <div class="links">
+    <a href="https://github.com/atharv24mittal/Satellite-Image-Segmentation-for-Building-Detection-using-U-net" target="_blank">GitHub</a>
+    <a href="mailto:atharvmittal2004@gmail.com">Contact</a>
+  </div>
+</footer>
+
+<script>
+// ── Tab switching ───────────────────────────────────────────────────────
+function showTab(id) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// ── Scroll reveal ────────────────────────────────────────────────────────
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold: 0.1 });
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+// ── Counter animation ────────────────────────────────────────────────────
+function animateCounter(el, target, duration = 1800) {
+  const isFloat = target < 10;
+  let start = null;
+  const step = ts => {
+    if (!start) start = ts;
+    const prog = Math.min((ts - start) / duration, 1);
+    const ease = 1 - Math.pow(1 - prog, 3);
+    const val = target * ease;
+    el.textContent = isFloat ? val.toFixed(3) : val.toFixed(1);
+    if (prog < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+const metricObs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      const el = e.target;
+      const target = parseFloat(el.dataset.target);
+      animateCounter(el, target);
+      metricObs.unobserve(el);
+    }
+  });
+}, { threshold: 0.5 });
+document.querySelectorAll('.metric-val[data-target]').forEach(el => metricObs.observe(el));
+</script>
+</body>
+</html>
